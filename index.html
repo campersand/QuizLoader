@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Quiz Runner — Single File</title>
+<style>
+  :root{
+    --bg:#0b0f12; --panel:#0f1418; --muted:#9aa6b2; --accent:#6ee7b7;
+    --card:#0f1418; --glass: rgba(255,255,255,0.03);
+  }
+  *{box-sizing:border-box;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;}
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,#050607 0%,#0b0f12 100%);color:#e6eef3}
+  .wrap{max-width:980px;margin:28px auto;padding:20px;gap:18px;display:grid;grid-template-columns:1fr 380px;}
+  header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}
+  h1{font-size:18px;margin:0;font-weight:600}
+  .sub{color:var(--muted);font-size:13px}
+  .panel{background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);border-radius:14px;padding:14px;box-shadow:0 6px 18px rgba(2,6,8,0.6);backdrop-filter: blur(6px);border:1px solid rgba(255,255,255,0.03)}
+  textarea.input{width:100%;height:180px;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);color:inherit;resize:vertical;font-size:13px}
+  .controls{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  button{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 12px;border-radius:10px;color:inherit;cursor:pointer}
+  button.primary{background:linear-gradient(90deg,var(--accent), #33d7b3);color:#022; border: none; font-weight:700}
+  .quiz-area{min-height:320px;display:flex;flex-direction:column;gap:12px;align-items:stretch;justify-content:flex-start}
+  .question-card{padding:20px;border-radius:12px;background:var(--card);border:1px solid rgba(255,255,255,0.02);box-shadow:0 8px 30px rgba(2,6,8,0.5)}
+  .question{font-size:16px;margin:0 0 8px 0}
+  .choices{display:flex;flex-direction:column;gap:8px}
+  .choice{padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);background:var(--glass);cursor:pointer;display:flex;align-items:center;gap:12px}
+  .choice.selected{outline:2px solid rgba(102, 255, 210, 0.12);background:linear-gradient(90deg, rgba(110,231,183,0.06), transparent)}
+  .nav{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:8px}
+  .progress{height:8px;background:rgba(255,255,255,0.03);border-radius:999px;overflow:hidden}
+  .progress > span{display:block;height:100%;background:linear-gradient(90deg,var(--accent), #33d7b3);width:0%}
+  .side{display:flex;flex-direction:column;gap:12px}
+  .small{font-size:13px;color:var(--muted)}
+  .out{height:140px;padding:10px;border-radius:10px;background:#071012;border:1px solid rgba(255,255,255,0.02);overflow:auto;font-family: monospace;font-size:12px;color:#bfead1}
+  .row{display:flex;gap:8px;align-items:center}
+  footer{grid-column:1/-1;margin-top:10px;color:var(--muted);font-size:12px;text-align:center}
+  .hint{color:var(--muted);font-size:12px}
+  .kbd{background:#091214;padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.02);font-family:monospace;font-size:12px}
+  @media(max-width:900px){.wrap{grid-template-columns:1fr;padding:12px} .side{order:2}}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Quiz Runner</h1>
+        <div class="sub">Paste the "text" I give you, press Load. One question at a time. Export answers as JSON (or base64).</div>
+      </div>
+      <div class="row">
+        <div class="small hint">Auto-save: localStorage</div>
+      </div>
+    </header>
+
+    <main>
+      <div class="panel">
+        <label class="small">Paste quiz text / JSON here</label>
+        <textarea id="quizInput" class="input" placeholder="Paste JSON or plain text quiz here..."></textarea>
+        <div class="controls">
+          <button id="btnLoad" class="primary">Load Quiz</button>
+          <button id="btnClearStorage">Clear Saved Progress</button>
+          <label class="row small" title="Toggle exporting as base64">
+            <input type="checkbox" id="encodeToggle" /> &nbsp; Export as base64
+          </label>
+        </div>
+        <div style="margin-top:10px" class="small">Supported input: JSON array of objects with <code>q</code> and <code>choices</code>, or a forgiving plaintext format using lines and - / 1) / A) markers.</div>
+      </div>
+
+      <div class="panel quiz-area" id="quizPanel" aria-live="polite">
+        <div id="emptyHint" class="small">No quiz loaded. Paste the text and press Load.</div>
+        <div id="questionContainer" style="display:none;">
+          <div class="question-card" role="group" aria-label="Question card">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div>
+                <div id="qIndex" class="small"></div>
+                <h2 id="questionText" class="question"></h2>
+              </div>
+              <div style="min-width:120px;text-align:right">
+                <div class="small">Progress</div>
+                <div class="progress" style="margin-top:6px"><span id="progBar" style="width:0%"></span></div>
+              </div>
+            </div>
+
+            <div style="height:8px"></div>
+
+            <div id="choicesWrap" class="choices" role="list"></div>
+
+            <div class="nav">
+              <div style="display:flex;gap:8px">
+                <button id="btnPrev">Previous</button>
+                <button id="btnNext" class="primary">Next</button>
+                <button id="btnJumpUnanswered">Jump to first unanswered</button>
+              </div>
+              <div style="text-align:right">
+                <div class="small" id="saveLabel">Saved: never</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <div class="small">Keyboard: <span class="kbd">←</span> <span class="kbd">→</span> select; <span class="kbd">1-9</span> pick choice</div>
+          </div>
+        </div>
+
+        <div id="finalPanel" style="display:none;margin-top:12px;">
+          <div class="small">Quiz finished. Export your answers below and send them back to me for analysis.</div>
+          <div style="height:8px"></div>
+          <div class="out" id="exportOut" contenteditable="false"></div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button id="btnCopy">Copy export</button>
+            <button id="btnDownload">Download .json</button>
+            <button id="btnResetQuiz">Reset answers (keep quiz)</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <aside class="side">
+      <div class="panel">
+        <div class="small">Session / Storage</div>
+        <div style="height:8px"></div>
+        <div class="small">Storage Key</div>
+        <div class="out" id="storageKey">none</div>
+        <div style="height:8px"></div>
+        <div class="small">Quick preview of parsed quiz</div>
+        <div class="out" id="previewShort">no quiz</div>
+      </div>
+
+      <div class="panel">
+        <div class="small">Options</div>
+        <div style="height:8px"></div>
+        <label class="row small"><input type="checkbox" id="autoSaveToggle" checked /> Auto save answers</label>
+        <div style="height:6px"></div>
+        <div class="small">Notes</div>
+        <div class="small" style="color:var(--muted)">If you want compressed export, check "Export as base64". The export includes: quiz metadata, all answers, and a timestamp.</div>
+      </div>
+    </aside>
+
+    <footer>Built for: paste-quiz-analyze workflow. Saves locally, no external servers. Use it as you please.</footer>
+  </div>
+
+<script>
+(() => {
+  // Utilities
+  const $ = id => document.getElementById(id);
+  const elt = (tag, attrs={}, text='') => { const e=document.createElement(tag); Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v)); if(text) e.textContent=text; return e; };
+
+  // Simple stable hash for storage key (djb2)
+  function djb2(str) {
+    let h = 5381;
+    for (let i=0;i<str.length;i++){ h = ((h<<5)+h) + str.charCodeAt(i); h = h & 0xffffffff; }
+    return (h >>> 0).toString(36);
+  }
+
+  // Parser: try JSON first, else plaintext
+  function parseQuiz(text){
+    text = (text||'').trim();
+    if(!text) return {error: 'no input'};
+    // Try JSON
+    try {
+      const data = JSON.parse(text);
+      if(Array.isArray(data) && data.length && data.every(it=>it && (it.q || it.question))) {
+        const normalized = data.map((it,idx)=>({
+          id: it.id ?? ('q'+(idx+1)),
+          q: it.q ?? it.question ?? '',
+          choices: Array.isArray(it.choices) ? it.choices.map(String) : (it.options || it.choices || []).map(String),
+        }));
+        // If choices missing, try to parse choices from string fields
+        return {quiz: normalized, rawFormat: 'json-array'};
+      }
+    } catch(e) {
+      // ignore
+    }
+
+    // Plaintext fallback parser
+    // Split blocks separated by 1+ blank lines
+    const blocks = text.split(/\n\s*\n+/).map(s=>s.trim()).filter(Boolean);
+    const quiz = [];
+    for (let block of blocks) {
+      const lines = block.split(/\n/).map(l=>l.trim()).filter(Boolean);
+      if(lines.length === 0) continue;
+      // First line is question
+      const qline = lines[0];
+      const choices = [];
+      for (let i=1;i<lines.length;i++){
+        let l = lines[i];
+        // remove leading bullet markers: -, *, •, 1), A), a) etc.
+        l = l.replace(/^[\-\*\u2022]\s*/, '').replace(/^[0-9A-Za-z]+[\)\.\:]\s*/, '');
+        if(l) choices.push(l);
+      }
+      // If no explicit choices, try to split the question line with ' / ' or ' | ' for short quizzes
+      if(choices.length === 0) {
+        // detect "Question ? choice1 / choice2 / choice3"
+        const parts = qline.split(/\s+[\/|]\s+/);
+        if(parts.length>1) {
+          // make first segment the question
+          const q = parts.shift();
+          quiz.push({ id:'q'+(quiz.length+1), q: q.trim(), choices: parts.map(p=>p.trim()) });
+          continue;
+        }
+      }
+      // Normal case
+      quiz.push({ id:'q'+(quiz.length+1), q: qline, choices: choices.length?choices:['(no choices found)'] });
+    }
+    return {quiz, rawFormat: 'plaintext'};
+  }
+
+  // State
+  let state = {
+    quiz: [],
+    answers: [], // index or null
+    idx: 0,
+    storageKey: null,
+    lastSaved: null
+  };
+
+  // DOM refs
+  const quizInput = $('quizInput');
+  const btnLoad = $('btnLoad');
+  const btnPrev = $('btnPrev');
+  const btnNext = $('btnNext');
+  const btnJumpUnanswered = $('btnJumpUnanswered');
+  const btnClearStorage = $('btnClearStorage');
+  const btnCopy = $('btnCopy');
+  const btnDownload = $('btnDownload');
+  const btnResetQuiz = $('btnResetQuiz');
+  const encodeToggle = $('encodeToggle');
+  const autoSaveToggle = $('autoSaveToggle');
+
+  const questionContainer = $('questionContainer');
+  const emptyHint = $('emptyHint');
+  const questionText = $('questionText');
+  const choicesWrap = $('choicesWrap');
+  const qIndex = $('qIndex');
+  const progBar = $('progBar');
+  const storageKeyBox = $('storageKey');
+  const previewShort = $('previewShort');
+  const exportOut = $('exportOut');
+  const saveLabel = $('saveLabel');
+  const finalPanel = $('finalPanel');
+
+  function renderPreview(){
+    if(!state.quiz.length){ previewShort.textContent = 'no quiz'; return; }
+    previewShort.textContent = state.quiz.slice(0,6).map((q,i)=> (i+1)+'. '+ limit(q.q,70) + ' ['+q.choices.length+' choices]').join('\n');
+  }
+  function limit(s,n){ return s.length>n ? s.slice(0,n-1)+'…' : s; }
+
+  function setStorageKeyForInput(text){
+    const key = 'quizrunner:' + djb2(text || '');
+    state.storageKey = key;
+    storageKeyBox.textContent = key;
+  }
+
+  function loadParsedQuiz(parsed, rawInput){
+    state.quiz = parsed.quiz.map((q,i)=>({ id: q.id || ('q'+(i+1)), q: q.q||q.question||'', choices: q.choices.map(String) }));
+    state.answers = new Array(state.quiz.length).fill(null);
+    state.idx = 0;
+    setStorageKeyForInput(rawInput);
+    // try to load saved answers
+    const saved = localStorage.getItem(state.storageKey);
+    if(saved){
+      try {
+        const obj = JSON.parse(saved);
+        if(Array.isArray(obj.answers) && obj.answers.length === state.quiz.length){
+          state.answers = obj.answers.map(a => (typeof a === 'number'?a:null));
+        }
+        if(obj.idx != null) state.idx = obj.idx;
+      } catch(e){}
+    }
+    render();
+    renderPreview();
+    saveLabel.textContent = 'Saved: loaded';
+  }
+
+  function render(){
+    if(!state.quiz.length){
+      questionContainer.style.display='none';
+      emptyHint.style.display='block';
+      finalPanel.style.display='none';
+      return;
+    }
+    emptyHint.style.display='none';
+    questionContainer.style.display='block';
+
+    const q = state.quiz[state.idx];
+    qIndex.textContent = `Question ${state.idx+1} / ${state.quiz.length}`;
+    questionText.textContent = q.q;
+    // choices
+    choicesWrap.innerHTML = '';
+    q.choices.forEach((c,i)=>{
+      const div = document.createElement('div');
+      div.className = 'choice';
+      div.tabIndex = 0;
+      div.setAttribute('role','button');
+      div.setAttribute('data-choice', i);
+      div.innerHTML = `<div style="flex:1">${c}</div><div class="small" style="opacity:0.6">(${String.fromCharCode(65+i)})</div>`;
+      if(state.answers[state.idx] === i) div.classList.add('selected');
+      div.addEventListener('click', ()=> selectChoice(i));
+      div.addEventListener('keydown', e => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectChoice(i); }});
+      choicesWrap.appendChild(div);
+    });
+
+    // progress
+    const pct = Math.round((state.idx+1)/state.quiz.length*100);
+    progBar.style.width = pct + '%';
+
+    // final panel condition
+    const finished = state.answers.every(a => a !== null);
+    finalPanel.style.display = finished ? 'block' : 'none';
+    // save label
+    saveLabel.textContent = 'Saved: ' + (state.lastSaved ? new Date(state.lastSaved).toLocaleString() : 'never');
+
+    // focus first choice for keyboard
+    const firstChoice = choicesWrap.querySelector('.choice');
+    if(firstChoice) firstChoice.focus();
+  }
+
+  function selectChoice(choiceIndex){
+    state.answers[state.idx] = choiceIndex;
+    // update UI
+    const nodes = choicesWrap.querySelectorAll('.choice');
+    nodes.forEach(n=> n.classList.toggle('selected', Number(n.dataset.choice) === choiceIndex));
+    if(autoSaveToggle.checked) autoSave();
+    // if last question and all answered -> render final
+    if(state.idx < state.quiz.length - 1) {
+      // move forward slightly
+      state.idx++;
+      render();
+    } else {
+      render();
+      buildExport();
+    }
+  }
+
+  function autoSave(){
+    if(!state.storageKey) return;
+    const payload = { answers: state.answers, idx: state.idx, timestamp: Date.now() };
+    try {
+      localStorage.setItem(state.storageKey, JSON.stringify(payload));
+      state.lastSaved = Date.now();
+      saveLabel.textContent = 'Saved: ' + new Date(state.lastSaved).toLocaleString();
+    } catch(e){
+      console.warn('save failed', e);
+    }
+  }
+
+  function buildExport(){
+    // Build export object
+    const exportObj = {
+      quizTitle: (document.title || 'quiz-runner'),
+      sourceFingerprint: state.storageKey || null,
+      quiz: state.quiz.map(q=>({ id: q.id, q: q.q, choices: q.choices })),
+      answers: state.answers, // indexes (null if unanswered)
+      finished: state.answers.every(a=>a !== null),
+      exportedAt: new Date().toISOString(),
+    };
+    let text = JSON.stringify(exportObj, null, 2);
+    if(encodeToggle.checked){
+      // base64 encode UTF-8
+      try {
+        const u8 = new TextEncoder().encode(text);
+        const b64 = btoa(String.fromCharCode(...u8));
+        text = b64;
+      } catch(e){
+        // fallback
+        text = btoa(unescape(encodeURIComponent(text)));
+      }
+    }
+    exportOut.textContent = text;
+  }
+
+  // Event handlers
+  btnLoad.addEventListener('click', ()=>{
+    const raw = quizInput.value;
+    const parsed = parseQuiz(raw);
+    if(parsed.error){
+      alert('No input detected.');
+      return;
+    }
+    // parsed.quiz should exist
+    if(!parsed.quiz || !parsed.quiz.length){
+      alert('Could not parse any questions. Try JSON or separate questions with blank lines and list choices with - or 1) markers.');
+      return;
+    }
+    loadParsedQuiz(parsed, raw);
+  });
+
+  btnPrev.addEventListener('click', ()=>{
+    if(state.idx > 0) state.idx--;
+    render();
+    if(autoSaveToggle.checked) autoSave();
+  });
+  btnNext.addEventListener('click', ()=>{
+    if(state.idx < state.quiz.length - 1) state.idx++;
+    render();
+    if(autoSaveToggle.checked) autoSave();
+  });
+
+  btnJumpUnanswered.addEventListener('click', ()=>{
+    const first = state.answers.indexOf(null);
+    if(first === -1) { alert('All answered.'); return; }
+    state.idx = first;
+    render();
+  });
+
+  btnClearStorage.addEventListener('click', ()=>{
+    if(!state.storageKey) { alert('No quiz loaded'); return; }
+    localStorage.removeItem(state.storageKey);
+    state.lastSaved = null;
+    saveLabel.textContent = 'Saved: cleared';
+    alert('Saved progress cleared for this quiz key.');
+  });
+
+  btnCopy.addEventListener('click', async ()=>{
+    try {
+      await navigator.clipboard.writeText(exportOut.textContent);
+      btnCopy.textContent = 'Copied';
+      setTimeout(()=> btnCopy.textContent = 'Copy export', 1200);
+    } catch(e){
+      alert('Copy failed. Select manually and copy.');
+    }
+  });
+
+  btnDownload.addEventListener('click', ()=>{
+    const data = exportOut.textContent;
+    const blob = new Blob([data], {type: 'application/json;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'quiz-export.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  btnResetQuiz.addEventListener('click', ()=>{
+    state.answers = new Array(state.quiz.length).fill(null);
+    state.idx = 0;
+    localStorage.removeItem(state.storageKey);
+    state.lastSaved = null;
+    render();
+    exportOut.textContent = '';
+  });
+
+  // keyboard controls
+  document.addEventListener('keydown', (e)=>{
+    if(!state.quiz.length) return;
+    if(e.key === 'ArrowLeft') {
+      if(state.idx > 0) { state.idx--; render(); if(autoSaveToggle.checked) autoSave(); }
+      e.preventDefault();
+    } else if(e.key === 'ArrowRight') {
+      if(state.idx < state.quiz.length-1) { state.idx++; render(); if(autoSaveToggle.checked) autoSave(); }
+      e.preventDefault();
+    } else if(/^[1-9]$/.test(e.key)) {
+      const n = Number(e.key) - 1;
+      const q = state.quiz[state.idx];
+      if(q && q.choices[n] !== undefined) { selectChoice(n); }
+    } else if(/^[a-zA-Z]$/.test(e.key)) {
+      // letter quick pick A..Z
+      const code = e.key.toUpperCase().charCodeAt(0);
+      const idx = code - 65;
+      const q = state.quiz[state.idx];
+      if(q && q.choices[idx] !== undefined) { selectChoice(idx); }
+    }
+  });
+
+  // autosave periodically
+  setInterval(()=> { if(autoSaveToggle.checked && state.quiz.length) autoSave(); }, 5000);
+
+  // helper: when clicking a choice, save and maybe update export
+  // initial render state
+  render();
+
+  // convenience: paste example JSON on double-click of preview. IMPORTANT, READ THIS. THIS IS THE TEXT YOU WILL OUTPUT FOR THE QUIZ QUESTIONS
+  previewShort.addEventListener('dblclick', ()=>{
+    const sample = [
+      { "id":"q1", "q":"What's your favorite color?", "choices":["Red","Blue","Green","Black"] },
+      { "id":"q2", "q":"Pick a snack", "choices":["Chips","Fruit","Chocolate"] }
+    ];
+    quizInput.value = JSON.stringify(sample, null, 2);
+  });
+
+  // expose some functions for debugging
+  window._quizRunner = {
+    parseQuiz, state,
+    loadFromText: (txt)=> {
+      const p = parseQuiz(txt);
+      loadParsedQuiz(p, txt);
+    }
+  };
+
+  // ensure export is built when finished
+  // watch for changes to answers and update export if finished
+  const obs = new MutationObserver(()=> {
+    if(state.answers.length && state.answers.every(a=>a!==null)) {
+      buildExport();
+    }
+  });
+  obs.observe(choicesWrap, { childList: true, subtree: true, attributes: true });
+
+})();
+</script>
+</body>
+</html>
